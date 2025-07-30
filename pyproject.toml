@@ -4,20 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "brevesky"
-version = "0.1.1"
+version = "0.1.4"
 description = "Comando para borrar tus publicaciones/interacciones de BlueSky"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {file = "LICENSE"}
 keywords = ["cli", "bluesky"]
 dependencies = [
   "python-dotenv==1.1.1",
   "click==8.2.1",
   "atproto==0.0.61",
 ]
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 
 [project.scripts]
-brevesky = "brevesky.cli:main"
+brevesky = "brevesky.cli:cli"
 
 [project.urls]
 Repository = "https://github.com/beigna/brevesky"
