@@ -1,34 +1,76 @@
-import os
 import time
 import random
+import shlex
 
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
-from atproto import Client
-from dotenv import load_dotenv
 import click
+from dotenv import dotenv_values
 
-env_path = Path.home() / ".brevesky"
-load_dotenv(dotenv_path=env_path)
-
-USERNAME = os.getenv('HANDLE')
-PASSWORD = os.getenv('PASSWORD')
-TZ_DIFF = int(os.getenv('TIMEZONE', '0'))
-TZ = timezone(timedelta(hours=TZ_DIFF))
+CONFIG_PATH = Path.home() / ".brevesky"
 
 
-@click.command()
-@click.option('--from', 'from_', required=True,
-              help='Fecha de inicio (YYYY-MM-DD)')
-@click.option('--to', required=True,
-              help='Fecha de fin (YYYY-MM-DD)')
-def main(from_, to):
-    start_at = datetime.strptime(from_, '%Y-%m-%d').replace(tzinfo=TZ)
-    end_at = datetime.strptime(to, '%Y-%m-%d').replace(tzinfo=TZ)
+@click.group()
+def cli():
+    pass
+
+
+@cli.command()
+def init():
+    if CONFIG_PATH.exists():
+        click.confirm(
+            'La configuración de BreveSky ya existe. ¿Querés modificarla?',
+            abort=True
+        )
+
+    handle = click.prompt(
+        'Ingresá tu handle de Bluesky (ej: pepito.bsky.social)',
+        type=str
+    )
+    password = click.prompt(
+        'Ingresá tu contraseña',
+        hide_input=True,
+        type=str
+    )
+    timezone_ = click.prompt(
+        'Ingresá tu diferencia horaria (ej: para Argentina es -3)',
+        type=click.IntRange(min=-13, max=13),
+        default=-3
+    )
+
+    content = (
+        f'HANDLE={shlex.quote(handle)}\n'
+        f'PASSWORD={shlex.quote(password)}\n'
+        f'TIMEZONE={timezone_}\n'
+    )
+
+    CONFIG_PATH.write_text(content)
+
+
+@cli.command()
+@click.option('--from', 'from_', help='Fecha de inicio (YYYY-MM-DD)')
+@click.option('--to', help='Fecha de fin (YYYY-MM-DD)')
+def delete(from_, to):
+    if CONFIG_PATH.exists() is False:
+        raise click.ClickException(
+            'No existe la configuración, ejecutá "brevesky init"'
+        )
+
+    if not from_ or not to:
+        raise click.UsageError("Debés pasar ambos parámetros: --from y --to")
+
+    cfg = dotenv_values(CONFIG_PATH)
+
+    handle = cfg['HANDLE']
+    password = cfg['PASSWORD']
+    tz_diff = timezone(timedelta(hours=int(cfg.get('TIMEZONE', '0'))))
+
+    start_at = datetime.strptime(from_, '%Y-%m-%d').replace(tzinfo=tz_diff)
+    end_at = datetime.strptime(to, '%Y-%m-%d').replace(tzinfo=tz_diff)
 
     go_on = click.prompt(
-        f'Vas a borrar el contenido de la cuenta {USERNAME}\n'
+        f'Vas a borrar el contenido de la cuenta {handle}\n'
         f'publicado entre las fechas {from_} y {to}\n'
         '¿Querés continuar? (y/N)',
         default='n',
@@ -40,12 +82,20 @@ def main(from_, to):
         raise SystemExit(1)
 
     click.echo('Iniciando...')
+    from atproto import Client  # lazy load
 
-    client = Client()
-    client.login(USERNAME, PASSWORD)
+    click.echo('Conectado a Bluesky...')
+
+    try:
+        client = Client()
+        client.login(handle, password)
+
+    except Exception as e:
+        click.secho(f"Error al iniciar sesión: {e}", fg="red")
+        raise SystemExit(1)
 
     did = client.com.atproto.identity.resolve_handle(
-        {'handle': USERNAME}
+        {'handle': handle}
     )['did']
 
     cursor = None
@@ -61,7 +111,11 @@ def main(from_, to):
             'cursor': cursor,
         })
 
-        click.echo(f'Evaluando lote de {len(response.feed)} publicaciones')
+        rows = len(response.feed)
+        if rows == 0:
+            break
+
+        click.echo(f'Evaluando lote de {rows} publicaciones')
 
         for feed_post in response.feed:
             if not feed_post.post:
@@ -80,7 +134,7 @@ def main(from_, to):
 
             rkey = feed_post.post.uri.split('/')[-1]
 
-            click.echo(f'Borrando {rkey}')
+            click.echo(f'  Borrando {rkey}')
 
             if feed_post.reason:
                 client.com.atproto.repo.delete_record({
@@ -120,7 +174,11 @@ def main(from_, to):
             'cursor': cursor,
         })
 
-        click.echo(f'Evaluando lote de {len(resp.records)} likes')
+        rows = len(resp.records)
+        if rows == 0:
+            break
+
+        click.echo(f'Evaluando lote de {rows} likes')
 
         for like in resp.records:
 
@@ -136,6 +194,8 @@ def main(from_, to):
                 break
 
             rkey = like.uri.split('/')[-1]
+
+            click.echo(f'  Borrando {rkey}')
 
             client.com.atproto.repo.delete_record({
                 'repo': did,
@@ -158,4 +218,4 @@ def main(from_, to):
 
 
 if __name__ == '__main__':
-    main()
+    cli()
